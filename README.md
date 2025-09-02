@@ -1,52 +1,52 @@
-# PictureChanger Tools (Unity Editor)
+# PictureChanger Tools for Unity Editor
 
-A set of Unity Editor utilities to scan, prepare, and bind images for PictureChanger components and Picture-material objects in your project. It provides:
+Unity Editor用のユーティリティセットで、プロジェクト内のPictureChangerコンポーネントおよびPicture-materialオブジェクトで使用する画像をスキャン・準備・バインドするための機能を提供します。主な機能は以下の通りです：
 
-- Scan usages and texture sizes across Prefabs and Scenes.
-- Generate resized/compressed copies of source images (long side < N).
-- Randomly assign orientation-aware textures to frames in scenes.
-- Keep Prefabs up to date on import; optionally rebind Scenes.
-- Clean up unreferenced generated/compressed textures.
+- PrefabとScene全体にわたる画像の使用状況とテクスチャサイズのスキャン
+- ソース画像のリサイズ/圧縮コピーの生成（長辺がNピクセル以下に収まるように）
+- Scene内のフレームに対して、向きを考慮したテクスチャをランダムに割り当て
+- Prefabのインポート時に内容を最新状態に維持。オプションでSceneの再バインドも可能
+- 参照されなくなった生成/圧縮テクスチャのクリーンアップ
 
-## Requirements
-- Unity Editor 2020+ (tested with Editor API used in scripts)
-- Unity Test Framework (optional, for running tests)
+## 動作要件
+- Unity Editor 2020以降（スクリプトで使用しているEditor APIの動作確認済み）
+- Unity Test Framework（テスト実行用、オプション機能）
 
-## Installation
-- Place the  folder in your project (already present in this repo).
-- On first use, a config asset is created at .
+## インストール方法
+- このリポジトリに含まれる  フォルダをプロジェクト内に配置してください
+- 初回使用時に設定アセットが  に作成されます
 
-## Configuration
-Edit :
-- rootFolder: Base output folder (default: ).
-- defaultRandomFolder: Source folder to pick images from.
-- compressedFolderName: Subfolder for resized/compressed outputs.
-- maxLongSideLessThan: Max long edge for generated textures.
-- verboseLogging: Enable additional logs.
-- autoRebindScenesOnImport: If true, scenes are auto opened/saved on texture import; otherwise, scene rebinds are queued.
+## 設定項目
+以下の設定を編集可能です：
+- rootFolder: 出力のベースフォルダ（デフォルト: ）
+- defaultRandomFolder: 画像のソースフォルダ
+- compressedFolderName: リサイズ/圧縮出力用のサブフォルダ名
+- maxLongSideLessThan: 生成テクスチャの最大長辺サイズ
+- verboseLogging: 詳細なログ出力を有効にする
+- autoRebindScenesOnImport: このオプションを有効化すると、テクスチャインポート時にSceneが自動開/保存されます。無効の場合はSceneの再バインド処理がキューに追加されます
 
-## Menu Commands
-- Tools/PictureChanger/Scan usages and sizes
-  - Scans Prefabs and Scenes, writes report to .
-  - Creates per-size folders under  as needed.
-- Tools/PictureChanger/Random assign VRChat images (resize, scenes)
-  - Generates resized textures into .
-  - Randomly assigns orientation-matching textures per scene. Shows progress and allows cancel.
-- Tools/PictureChanger/Clean unreferenced compressed images
-  - Deletes compressed textures not referenced by any PictureChanger in Prefabs/Scenes.
-- Tools/PictureChanger/Rebind scenes for pending imports
-  - Applies queued rebinds for imported textures without auto-saving scenes on every import.
+## メニューコマンド
+- ツール/PictureChanger/使用状況とサイズのスキャン
+  - PrefabとSceneをスキャンし、結果を .に出力します
+  - 必要に応じて  以下にサイズ別のフォルダを作成します
+- ツール/PictureChanger/VRChat用画像をランダムに割り当て（リサイズ/Scene）
+  - リサイズ済みテクスチャを .に生成します
+  - Sceneごとに向きが一致するテクスチャをランダムに割り当てます。処理進捗を表示し、キャンセル操作も可能です
+- ツール/PictureChanger/参照されていない圧縮画像のクリーンアップ
+  - Prefab/Scene内でどのPictureChangerからも参照されていない圧縮テクスチャを削除します
+- ツール/PictureChanger/インポート待ちSceneの再バインド
+  - インポートされたテクスチャに対して、キューに登録されたSceneの再バインド処理を適用します。インポート時にSceneを自動保存する機能はデフォルトで無効になっています
 
-## Safety and UX
-- Long operations show progress bars and allow cancellation.
-- Potentially destructive operations prompt for confirmation.
-- Import-time processing updates Prefabs and queues Scene updates by default.
+## 安全性とユーザーエクスペリエンス
+- 長時間かかる処理には進捗バーを表示し、キャンセル操作が可能です
+- データに影響を与える可能性のある操作については、実行前に確認ダイアログを表示します
+- インポート時の処理では、デフォルトでPrefabの内容を最新状態に更新し、Sceneの更新処理はキューに追加されます
 
-## Tests
-- Basic EditMode tests for pure helpers live under  (if present).
-- Run via Unity Test Runner (Window -> General -> Test Runner).
+## テストについて
+- 純粋なヘルパー機能の基本EditModeテストは、  フォルダ内に配置されています（存在する場合）
+- Unity Test Runnerを使用して実行してください（ウィンドウメニュー→一般→テストランナーから起動可能）
 
-## Development Notes
-- Editor code is split into focused files: tools, postprocessor, rebind queue, and config.
-- IO operations have basic exception handling to avoid full-stop failures.
-- Further refactoring can extract additional helpers or add more granular logging levels.
+## 開発メモ
+- Editor用コードは機能ごとに分割されています：ツール機能、ポストプロセッサ、再バインドキュー、設定管理など
+- IO操作には基本的な例外処理を実装しており、システムが停止するような重大なエラーを回避しています
+- 今後のリファクタリングにより、追加のヘルパー機能を抽出したり、より詳細なログレベルを設定することが考えられます
