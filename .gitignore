@@ -1,0 +1,40 @@
+# 自動生成・ビルド・OS一時ファイルはすべて無視
+Library/
+Temp/
+Logs/
+UserSettings/
+Packages/
+
+[Bb]uild/
+[Bb]uilds/
+Obj/
+obj/
+
+*.csproj
+*.sln
+*.user
+*.unityproj
+*.pidb
+*.booproj
+.vscode/
+.idea/
+
+Packages/packages-lock.json
+Packages/manifest.json.lock
+Packages/vpm-manifest.json
+
+.DS_Store
+Thumbs.db
+
+# Assetsフォルダ以下全体をいったん無視
+Assets/
+
+# 例外：Assets/配下の Editor フォルダだけを追跡
+!Assets/Editor/
+# さらに、その中の特定ファイルだけ追跡
+!Assets/Editor/PictureChangerTools.cs
+
+# 他の個別ファイルを追加したい場合はさらに書き足し
+# 例： !Assets/SomeFolder/ImportantFile.cs
+
+# 必要に応じて、除外したいフォルダやファイル指定も追記
