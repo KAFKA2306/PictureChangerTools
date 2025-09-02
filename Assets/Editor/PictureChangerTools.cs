@@ -19,68 +19,113 @@ public static class PictureChangerTools
     private const string CompressedFolderName = "Compressed1023"; // 長辺<1024の圧縮先
     private const int MaxLongSideLessThan = 1023; // 長辺の最大値(厳密に未満)
 
+    // Configuration accessors (with sensible defaults)
+    private static PictureChangerConfig Config => PictureChangerConfig.GetOrCreate();
+    private static string Root => string.IsNullOrEmpty(Config.rootFolder) ? RootFolder : Config.rootFolder;
+    private static string RandomInput => string.IsNullOrEmpty(Config.defaultRandomFolder) ? DefaultRandomFolder : Config.defaultRandomFolder;
+    private static string CompName => string.IsNullOrEmpty(Config.compressedFolderName) ? CompressedFolderName : Config.compressedFolderName;
+    private static int MaxLong => Config.maxLongSideLessThan > 0 ? Config.maxLongSideLessThan : MaxLongSideLessThan;
+
     [MenuItem("Tools/PictureChanger/Scan usages and sizes")] 
     public static void ScanUsagesAndSizes()
     {
         var entries = new List<PCEntry>();
 
+        var prefabGuids = AssetDatabase.FindAssets("t:Prefab");
+        var sceneGuids = AssetDatabase.FindAssets("t:Scene");
+        float total = Mathf.Max(1, prefabGuids.Length + sceneGuids.Length);
+        int progress = 0;
+        bool canceled = false;
+
         // Prefabs
-        foreach (var path in AssetDatabase.FindAssets("t:Prefab").Select(AssetDatabase.GUIDToAssetPath))
+        foreach (var path in prefabGuids.Select(AssetDatabase.GUIDToAssetPath))
         {
+            canceled = EditorUtility.DisplayCancelableProgressBar("Scan PictureChanger", $"Prefab: {path}", (++progress) / total);
+            if (canceled) break;
             var go = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (go == null) continue;
             foreach (var pc in go.GetComponentsInChildren<PictureChanger>(true))
             {
                 entries.Add(BuildEntry(pc, path, isScene:false));
             }
+            // Also scan standalone Picture objects with Materials
+            foreach (Transform child in go.GetComponentsInChildren<Transform>(true))
+            {
+                if (child.name == "Picture" && child.GetComponent<MeshRenderer>() != null)
+                {
+                    entries.Add(BuildPictureEntry(child.gameObject, path, isScene:false));
+                }
+            }
         }
 
         // Scenes
-        var currentScenePath = EditorSceneManager.GetActiveScene().path;
-        foreach (var scenePath in AssetDatabase.FindAssets("t:Scene").Select(AssetDatabase.GUIDToAssetPath))
+        if (!canceled)
         {
-            var scene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Additive);
-            try
+            foreach (var scenePath in sceneGuids.Select(AssetDatabase.GUIDToAssetPath))
             {
-                foreach (var root in scene.GetRootGameObjects())
+                canceled = EditorUtility.DisplayCancelableProgressBar("Scan PictureChanger", $"Scene: {scenePath}", (++progress) / total);
+                if (canceled) break;
+                var scene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Additive);
+                try
                 {
-                    foreach (var pc in root.GetComponentsInChildren<PictureChanger>(true))
+                    foreach (var root in scene.GetRootGameObjects())
                     {
-                        entries.Add(BuildEntry(pc, scenePath, isScene:true));
+                        foreach (var pc in root.GetComponentsInChildren<PictureChanger>(true))
+                        {
+                            entries.Add(BuildEntry(pc, scenePath, isScene:true));
+                        }
+                        // Also scan standalone Picture objects with Materials
+                        foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
+                        {
+                            if (child.name == "Picture" && child.GetComponent<MeshRenderer>() != null)
+                            {
+                                entries.Add(BuildPictureEntry(child.gameObject, scenePath, isScene:true));
+                            }
+                        }
                     }
                 }
-            }
-            finally
-            {
-                EditorSceneManager.CloseScene(scene, removeScene: true);
+                finally
+                {
+                    EditorSceneManager.CloseScene(scene, removeScene: true);
+                }
             }
         }
 
-        Directory.CreateDirectory(RootFolder);
-        var reportPath = Path.Combine(RootFolder, "picture_changer_report.txt");
-        using (var sw = new StreamWriter(reportPath, false))
+        Directory.CreateDirectory(Root);
+        var reportPath = Path.Combine(Root, "picture_changer_report.txt");
+        try
         {
-            sw.WriteLine("PictureChanger usages and sizes");
-            sw.WriteLine(DateTime.Now.ToString("u"));
-            sw.WriteLine();
-            foreach (var e in entries.OrderBy(e => e.LocationPath).ThenBy(e => e.ObjectPath))
+            using (var sw = new StreamWriter(reportPath, false))
             {
-                sw.WriteLine($"- {(e.IsScene ? "Scene" : "Prefab")}: {e.LocationPath}");
-                sw.WriteLine($"  GameObject: {e.ObjectPath}");
-                sw.WriteLine($"  Size group: {e.SizeGroup}");
-                if (e.Sizes.Count > 0)
-                {
-                    sw.WriteLine($"  Textures: {string.Join(", ", e.Sizes.Select(s => s.w + "x" + s.h))}");
-                }
-                else
-                {
-                    sw.WriteLine("  Textures: <none>");
-                }
+                sw.WriteLine("PictureChanger and Picture object usages and sizes");
+                sw.WriteLine(DateTime.Now.ToString("u"));
                 sw.WriteLine();
+                foreach (var e in entries.OrderBy(e => e.LocationPath).ThenBy(e => e.ObjectPath))
+                {
+                    var objectType = e.IsPictureObject ? "Picture Material" : "PictureChanger";
+                    sw.WriteLine($"- {(e.IsScene ? "Scene" : "Prefab")}: {e.LocationPath}");
+                    sw.WriteLine($"  Object Type: {objectType}");
+                    sw.WriteLine($"  GameObject: {e.ObjectPath}");
+                    sw.WriteLine($"  Size group: {e.SizeGroup}");
+                    if (e.Sizes.Count > 0)
+                    {
+                        sw.WriteLine($"  Textures: {string.Join(", ", e.Sizes.Select(s => s.w + "x" + s.h))}");
+                    }
+                    else
+                    {
+                        sw.WriteLine("  Textures: <none>");
+                    }
+                    sw.WriteLine();
+                }
             }
         }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[PictureChanger] Failed to write report: {ex.Message}\nPath: {reportPath}");
+        }
 
-        Debug.Log($"[PictureChanger] Report written: {reportPath}");
+        EditorUtility.ClearProgressBar();
+        if (Config.verboseLogging) Debug.Log($"[PictureChanger] Report written: {reportPath}");
 
         // Ensure folders for each detected size group
         foreach (var group in entries.Select(e => e.SizeGroup).Where(g => !string.IsNullOrEmpty(g) && g != "Mixed").Distinct())
@@ -106,10 +151,17 @@ public static class PictureChangerTools
     [MenuItem("Tools/PictureChanger/Random assign VRChat images (resize, scenes)")]
     public static void RandomAssignVRChatImagesResized()
     {
-        var folder = DefaultRandomFolder;
+        var folder = RandomInput;
         if (!AssetDatabase.IsValidFolder(folder))
         {
             Debug.LogWarning($"[PictureChanger] Folder not found: {folder}");
+            return;
+        }
+
+        if (!EditorUtility.DisplayDialog("Random Assign (Resized)",
+            "This will generate resized textures and modify scenes. Proceed?",
+            "Proceed", "Cancel"))
+        {
             return;
         }
 
@@ -152,6 +204,29 @@ public static class PictureChangerTools
                                 requiredSizes.Add((fw, fh));
                             }
                         }
+                        
+                        // Also collect sizes for standalone Picture objects
+                        foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
+                        {
+                            if (child.name == "Picture" && child.GetComponent<MeshRenderer>() != null)
+                            {
+                                var pathH = GetHierarchyPath(child);
+                                if (!pathH.Contains("P_PictureFrame")) continue;
+                                var entry = BuildPictureEntry(child.gameObject, scenePath, isScene: true);
+                                if (TryParseSize(entry.SizeGroup, out var w, out var h))
+                                {
+                                    requiredSizes.Add((w, h));
+                                }
+                                else
+                                {
+                                    // Fallback: infer portrait/landscape from transform scale
+                                    var portrait = IsPictureObjectPortrait(child.gameObject);
+                                    var fw = portrait ? 1080 : 1920;
+                                    var fh = portrait ? 1920 : 1080;
+                                    requiredSizes.Add((fw, fh));
+                                }
+                            }
+                        }
                     }
                 }
                 finally
@@ -164,41 +239,60 @@ public static class PictureChangerTools
             AssetDatabase.StartAssetEditing();
             try
             {
-                var compFolder = $"{RootFolder}/{CompressedFolderName}";
+                var compFolder = $"{Root}/{CompName}";
                 EnsureFolderPath(compFolder);
                 int genPortrait = 0, genLandscape = 0, skipped = 0;
+                int idx = 0; int total = Mathf.Max(1, lib.Count);
                 foreach (var src in lib)
                 {
+                    if (EditorUtility.DisplayCancelableProgressBar("Generate Resized Textures", AssetDatabase.GetAssetPath(src.Tex), (float)++idx / total))
+                    {
+                        break;
+                    }
                     var baseName = Path.GetFileNameWithoutExtension(AssetDatabase.GetAssetPath(src.Tex));
-                    var (nw, nh) = GetScaledSize(src.W, src.H, MaxLongSideLessThan);
+                    var (nw, nh) = GetScaledSize(src.W, src.H, MaxLong);
                     var fileName = $"{Sanitize(baseName)}_{nw}x{nh}.png";
                     var outPath = Path.Combine(compFolder, fileName).Replace('\\','/');
                     if (File.Exists(outPath)) { skipped++; continue; } // already exists
-                    var resized = ResizeTexture(src.Tex, nw, nh);
-                    var bytes = resized.EncodeToPNG();
-                    File.WriteAllBytes(outPath, bytes);
-                    UnityEngine.Object.DestroyImmediate(resized);
-                    AssetDatabase.ImportAsset(outPath, ImportAssetOptions.ForceSynchronousImport);
+                    try
+                    {
+                        var resized = ResizeTexture(src.Tex, nw, nh);
+                        var bytes = resized.EncodeToPNG();
+                        File.WriteAllBytes(outPath, bytes);
+                        UnityEngine.Object.DestroyImmediate(resized);
+                        AssetDatabase.ImportAsset(outPath, ImportAssetOptions.ForceSynchronousImport);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogError($"[PictureChanger] Failed to generate: {outPath}\n{ex.Message}");
+                        continue;
+                    }
                     if (nh > nw) genPortrait++; else genLandscape++;
                 }
-                Debug.Log($"[PictureChanger] Compressed1023 generated: portrait={genPortrait}, landscape={genLandscape}, skipped-existing={skipped}");
+                if (Config.verboseLogging) Debug.Log($"[PictureChanger] {CompName} generated: portrait={genPortrait}, landscape={genLandscape}, skipped-existing={skipped}");
             }
             finally
             {
                 AssetDatabase.StopAssetEditing();
                 AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                EditorUtility.ClearProgressBar();
             }
 
             // Phase 3: assign randomly per scene with unique selection per orientation
             int updated = 0;
+            int sidx = 0; int stotal = Mathf.Max(1, scenePaths.Length);
             foreach (var scenePath in scenePaths)
             {
+                if (EditorUtility.DisplayCancelableProgressBar("Assign Random Textures", scenePath, (float)++sidx / stotal))
+                {
+                    break;
+                }
                 var scene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Additive);
                 var sceneDirty = false;
                 try
                 {
                     // Build orientation-specific pools once per scene
-                    var compFolder = $"{RootFolder}/{CompressedFolderName}";
+                    var compFolder = $"{Root}/{CompName}";
                     var guids = AssetDatabase.FindAssets("t:Texture2D", new[] { compFolder });
                     var texPaths = guids.Select(AssetDatabase.GUIDToAssetPath).ToArray();
                     var allPool = texPaths.Select(p => AssetDatabase.LoadAssetAtPath<Texture2D>(p)).Where(t => t != null).ToList();
@@ -230,18 +324,31 @@ public static class PictureChangerTools
                                     tex = preferredPool[idxLandscape++];
                                 pickedUnique.Add(tex);
                             }
-                            // If still short, fill from the other pool without replacement
+                            // If still short, stay within the same orientation pool.
+                            // Prefer reusing textures from the preferred pool rather than mixing orientations.
                             if (pickedUnique.Count < desired)
                             {
-                                var otherPool = portrait ? poolLandscape : poolPortrait;
-                                int otherIdx = portrait ? idxLandscape : idxPortrait;
-                                int otherAvail = (otherPool.Count - otherIdx);
-                                int need = desired - pickedUnique.Count;
-                                int take = Mathf.Min(need, Math.Max(otherAvail, 0));
-                                for (int k = 0; k < take; k++)
+                                var pool = preferredPool;
+                                int count = pool.Count;
+                                if (count > 0)
                                 {
-                                    var tex = otherPool[portrait ? idxLandscape++ : idxPortrait++];
-                                    if (!pickedUnique.Contains(tex)) pickedUnique.Add(tex);
+                                    // Allow wrapping and duplicates to satisfy desired count without crossing orientation.
+                                    while (pickedUnique.Count < desired)
+                                    {
+                                        Texture2D tex;
+                                        if (portrait)
+                                        {
+                                            // wrap-around within portrait pool
+                                            if (idxPortrait >= count) idxPortrait = 0;
+                                            tex = pool[idxPortrait++];
+                                        }
+                                        else
+                                        {
+                                            if (idxLandscape >= count) idxLandscape = 0;
+                                            tex = pool[idxLandscape++];
+                                        }
+                                        pickedUnique.Add(tex);
+                                    }
                                 }
                             }
                             // If still短い: 最低限1枚は割当（プールが空ならスキップ）
@@ -255,6 +362,60 @@ public static class PictureChangerTools
                                 sp.GetArrayElementAtIndex(i).objectReferenceValue = pickedUnique[i];
                             so.ApplyModifiedPropertiesWithoutUndo();
                             sceneDirty = true;
+                        }
+
+                        // Also assign textures to standalone Picture objects
+                        foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
+                        {
+                            if (child.name == "Picture" && child.GetComponent<MeshRenderer>() != null)
+                            {
+                                var pathH = GetHierarchyPath(child);
+                                if (!pathH.Contains("P_PictureFrame")) continue;
+
+                                var mr = child.GetComponent<MeshRenderer>();
+                                if (mr.sharedMaterial == null) continue;
+
+                                bool portrait = IsPictureObjectPortrait(child.gameObject);
+                                var preferredPool = portrait ? poolPortrait : poolLandscape;
+                                
+                                // Pick one unique texture for this Picture object
+                                if ((portrait ? idxPortrait : idxLandscape) < preferredPool.Count)
+                                {
+                                    Texture2D selectedTex;
+                                    if (portrait)
+                                        selectedTex = preferredPool[idxPortrait++];
+                                    else
+                                        selectedTex = preferredPool[idxLandscape++];
+                                    
+                                    // Create a new material instance and assign the texture
+                                    var newMaterial = new Material(mr.sharedMaterial);
+                                    newMaterial.mainTexture = selectedTex;
+                                    mr.material = newMaterial;
+                                    sceneDirty = true;
+                                }
+                                else
+                                {
+                                    // Stay within the same orientation: wrap and reuse if needed
+                                    if (preferredPool.Count > 0)
+                                    {
+                                        Texture2D selectedTex;
+                                        if (portrait)
+                                        {
+                                            if (idxPortrait >= preferredPool.Count) idxPortrait = 0;
+                                            selectedTex = preferredPool[idxPortrait++];
+                                        }
+                                        else
+                                        {
+                                            if (idxLandscape >= preferredPool.Count) idxLandscape = 0;
+                                            selectedTex = preferredPool[idxLandscape++];
+                                        }
+                                        var newMaterial = new Material(mr.sharedMaterial);
+                                        newMaterial.mainTexture = selectedTex;
+                                        mr.material = newMaterial;
+                                        sceneDirty = true;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -275,6 +436,7 @@ public static class PictureChangerTools
         }
         finally
         {
+            EditorUtility.ClearProgressBar();
             IsBulkOp = false;
         }
     }
@@ -282,10 +444,15 @@ public static class PictureChangerTools
     [MenuItem("Tools/PictureChanger/Clean unreferenced compressed images")] 
     public static void CleanUnreferencedCompressed()
     {
+        if (!EditorUtility.DisplayDialog("Clean Unreferenced", "Delete unreferenced compressed textures? This cannot be undone.", "Delete", "Cancel"))
+            return;
         var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         // Gather all referenced textures from PictureChanger
-        foreach (var scenePath in AssetDatabase.FindAssets("t:Scene").Select(AssetDatabase.GUIDToAssetPath))
+        var sceneGuids = AssetDatabase.FindAssets("t:Scene");
+        int idx = 0; int total = Mathf.Max(1, sceneGuids.Length);
+        foreach (var scenePath in sceneGuids.Select(AssetDatabase.GUIDToAssetPath))
         {
+            if (EditorUtility.DisplayCancelableProgressBar("Scan References (Scenes)", scenePath, (float)++idx / total)) { break; }
             var scene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Additive);
             try
             {
@@ -308,8 +475,11 @@ public static class PictureChangerTools
                 EditorSceneManager.CloseScene(scene, removeScene: true);
             }
         }
-        foreach (var path in AssetDatabase.FindAssets("t:Prefab").Select(AssetDatabase.GUIDToAssetPath))
+        EditorUtility.ClearProgressBar();
+        idx = 0; var prefabGuids = AssetDatabase.FindAssets("t:Prefab"); total = Mathf.Max(1, prefabGuids.Length);
+        foreach (var path in prefabGuids.Select(AssetDatabase.GUIDToAssetPath))
         {
+            if (EditorUtility.DisplayCancelableProgressBar("Scan References (Prefabs)", path, (float)++idx / total)) { break; }
             var go = AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (go == null) continue;
             foreach (var pc in go.GetComponentsInChildren<PictureChanger>(true))
@@ -325,22 +495,29 @@ public static class PictureChangerTools
         }
 
         // Find all compressed textures
-        var compressedRoot = AssetDatabase.IsValidFolder(RootFolder) ? $"{RootFolder}/{CompressedFolderName}" : null;
+        var compressedRoot = AssetDatabase.IsValidFolder(Root) ? $"{Root}/{CompName}" : null;
 
-        int deleted = 0;
+        EditorUtility.ClearProgressBar();
+        int deleted = 0; int scanned = 0; int kept = 0;
         AssetDatabase.StartAssetEditing();
         try
         {
             if (!string.IsNullOrEmpty(compressedRoot) && AssetDatabase.IsValidFolder(compressedRoot))
             {
                 var guids = AssetDatabase.FindAssets("t:Texture2D", new[] { compressedRoot });
+                int tcount = Mathf.Max(1, guids.Length);
                 foreach (var g in guids)
                 {
                     var p = AssetDatabase.GUIDToAssetPath(g).Replace('\\','/');
+                    if (EditorUtility.DisplayCancelableProgressBar("Delete Unreferenced", p, (float)++scanned / tcount)) break;
                     if (!referenced.Contains(p))
                     {
                         AssetDatabase.DeleteAsset(p);
                         deleted++;
+                    }
+                    else
+                    {
+                        kept++;
                     }
                 }
             }
@@ -349,9 +526,10 @@ public static class PictureChangerTools
         {
             AssetDatabase.StopAssetEditing();
             AssetDatabase.Refresh();
+            EditorUtility.ClearProgressBar();
         }
 
-        Debug.Log($"[PictureChanger] Cleaned {deleted} unreferenced compressed textures.");
+        Debug.Log($"[PictureChanger] Cleaned {deleted} unreferenced compressed textures. Kept referenced={kept}.");
     }
 
     private class TexInfo
@@ -388,7 +566,8 @@ public static class PictureChangerTools
 
     private static Texture2D ResizeTexture(Texture src, int width, int height)
     {
-        var rt = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+        var rw = (QualitySettings.activeColorSpace == ColorSpace.Linear) ? RenderTextureReadWrite.Linear : RenderTextureReadWrite.sRGB;
+        var rt = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32, rw);
         var prev = RenderTexture.active;
         Graphics.Blit(src, rt);
         RenderTexture.active = rt;
@@ -466,6 +645,48 @@ public static class PictureChangerTools
         }
 
         // Prefer mesh-based measurement in world units
+        var mf = mr.GetComponent<MeshFilter>();
+        if (mf != null && mf.sharedMesh != null)
+        {
+            var ls = t.lossyScale;
+            var local = mf.sharedMesh.bounds.size;
+            var world = new Vector3(Mathf.Abs(local.x * ls.x), Mathf.Abs(local.y * ls.y), Mathf.Abs(local.z * ls.z));
+            var dims = new[] { world.x, world.y, world.z };
+            Array.Sort(dims); // dims[2] = largest, dims[1] = second largest => treat as plane height/width
+            float width = dims[1];
+            float height = dims[2];
+            return height >= width;
+        }
+        else
+        {
+            var b = mr.bounds.size;
+            var dims = new[] { b.x, b.y, b.z };
+            Array.Sort(dims);
+            float width = dims[1];
+            float height = dims[2];
+            return height >= width;
+        }
+    }
+
+    private static bool IsPictureObjectPortrait(GameObject pictureObject)
+    {
+        var t = pictureObject.transform;
+        // 1) Name heuristic takes priority when available
+        if (TryGetPortraitByNameHeuristic(t, out var byName)) return byName;
+        
+        var mr = pictureObject.GetComponent<MeshRenderer>();
+        if (mr == null)
+        {
+            // Fallback: compare lossyScale (robust to rotations where Y is larger than X)
+            var s = t.lossyScale;
+            var dims = new[] { Mathf.Abs(s.x), Mathf.Abs(s.y), Mathf.Abs(s.z) };
+            Array.Sort(dims);
+            float width = dims[1];
+            float height = dims[2];
+            return height >= width;
+        }
+
+        // Use mesh-based measurement in world units
         var mf = mr.GetComponent<MeshFilter>();
         if (mf != null && mf.sharedMesh != null)
         {
@@ -585,6 +806,41 @@ public static class PictureChangerTools
         };
     }
 
+    private static PCEntry BuildPictureEntry(GameObject pictureObject, string locationPath, bool isScene)
+    {
+        var sizes = new List<(int w, int h)>();
+        var mr = pictureObject.GetComponent<MeshRenderer>();
+        if (mr != null && mr.sharedMaterial != null)
+        {
+            var mainTex = mr.sharedMaterial.mainTexture as Texture2D;
+            if (mainTex != null)
+            {
+                sizes.Add((mainTex.width, mainTex.height));
+            }
+        }
+
+        string sizeGroup = "";
+        if (sizes.Count == 0)
+        {
+            sizeGroup = "Unknown";
+        }
+        else
+        {
+            var s = sizes[0];
+            sizeGroup = $"{s.w}x{s.h}";
+        }
+
+        return new PCEntry
+        {
+            IsScene = isScene,
+            LocationPath = locationPath,
+            ObjectPath = GetHierarchyPath(pictureObject.transform),
+            SizeGroup = sizeGroup,
+            Sizes = sizes,
+            IsPictureObject = true
+        };
+    }
+
     private static string GetHierarchyPath(Transform t)
     {
         var stack = new Stack<string>();
@@ -598,15 +854,15 @@ public static class PictureChangerTools
 
     private static void EnsureSizeFolder(string group)
     {
-        if (!AssetDatabase.IsValidFolder(RootFolder))
+        if (!AssetDatabase.IsValidFolder(Root))
         {
-            AssetDatabase.CreateFolder("Assets", "PictureChanger");
+            EnsureFolderPath(Root);
         }
-        var subPath = $"{RootFolder}/{group}";
+        var subPath = $"{Root}/{group}";
         if (!AssetDatabase.IsValidFolder(subPath))
         {
-            AssetDatabase.CreateFolder(RootFolder, group);
-            Debug.Log($"[PictureChanger] Created folder: {subPath}");
+            AssetDatabase.CreateFolder(Root, group);
+            if (Config.verboseLogging) Debug.Log($"[PictureChanger] Created folder: {subPath}");
         }
     }
 
@@ -619,7 +875,7 @@ public static class PictureChangerTools
         }
         EnsureSizeFolder(entry.SizeGroup);
 
-        var folder = $"{RootFolder}/{entry.SizeGroup}";
+        var folder = $"{Root}/{entry.SizeGroup}";
         var guids = AssetDatabase.FindAssets("t:Texture2D", new[] { folder });
         var texPaths = guids.Select(AssetDatabase.GUIDToAssetPath).OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToArray();
         var textures = texPaths.Select(p => AssetDatabase.LoadAssetAtPath<Texture>(p)).Where(t => t != null).ToArray();
@@ -643,127 +899,19 @@ public static class PictureChangerTools
         public string ObjectPath;
         public string SizeGroup;
         public List<(int w, int h)> Sizes = new List<(int w, int h)>();
-    }
-}
-
-// Rebind PictureChanger when new textures are imported.
-public class PictureChangerAssetPostprocessor : AssetPostprocessor
-{
-    void OnPreprocessTexture()
-    {
-        if (PictureChangerTools.IsBulkOp) return;
-        if (string.IsNullOrEmpty(assetPath)) return;
-        var p = assetPath.Replace('\\','/');
-        if (!p.StartsWith("Assets/PictureChanger/", StringComparison.OrdinalIgnoreCase)) return;
-
-        var importer = (TextureImporter)assetImporter;
-        // Generated 配下は強めに圧縮し、ミップマップをオフに
-        if (p.IndexOf("/Generated/", StringComparison.OrdinalIgnoreCase) >= 0 || p.IndexOf("/Compressed1023/", StringComparison.OrdinalIgnoreCase) >= 0)
-        {
-            importer.textureType = TextureImporterType.Default;
-            importer.sRGBTexture = true;
-            importer.mipmapEnabled = false;
-            importer.wrapMode = TextureWrapMode.Clamp;
-            importer.filterMode = FilterMode.Bilinear;
-            importer.textureCompression = TextureImporterCompression.Compressed;
-            importer.crunchedCompression = true;
-            importer.compressionQuality = 50; // 0-100 中程度
-            // 上限サイズの安全網。必要に応じて個別で上げられる
-            if (importer.maxTextureSize > 2048) importer.maxTextureSize = 2048;
-        }
+        public bool IsPictureObject = false;
     }
 
-    void OnPostprocessTexture(Texture2D texture)
+    // Accessors for postprocessor (cannot directly access private properties)
+    internal static string GetRootForPostprocessor()
     {
-        if (texture == null) return;
-        if (PictureChangerTools.IsBulkOp || EditorApplication.isUpdating || EditorApplication.isCompiling)
-            return; // avoid re-entrancy during bulk ops or refresh
-        var group = $"{texture.width}x{texture.height}";
-        var folder = $"Assets/PictureChanger/{group}";
-        // Only trigger if imported into the matching folder
-        if (!assetPath.Replace('\\','/').StartsWith(folder, StringComparison.OrdinalIgnoreCase))
-            return;
-
-        // Update prefabs
-        foreach (var path in AssetDatabase.FindAssets("t:Prefab").Select(AssetDatabase.GUIDToAssetPath))
-        {
-            var go = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-            if (go == null) continue;
-            foreach (var pc in go.GetComponentsInChildren<PictureChanger>(true))
-            {
-                if (TryMatchGroup(pc, group))
-                {
-                    // Bind and mark dirty
-                    if (Bind(pc, group)) EditorUtility.SetDirty(go);
-                }
-            }
-        }
-
-        // Update scenes (loaded additively and saved)
-        foreach (var scenePath in AssetDatabase.FindAssets("t:Scene").Select(AssetDatabase.GUIDToAssetPath))
-        {
-            var scene = UnityEditor.SceneManagement.EditorSceneManager.OpenScene(scenePath, UnityEditor.SceneManagement.OpenSceneMode.Additive);
-            var dirty = false;
-            try
-            {
-                foreach (var root in scene.GetRootGameObjects())
-                {
-                    foreach (var pc in root.GetComponentsInChildren<PictureChanger>(true))
-                    {
-                        if (TryMatchGroup(pc, group))
-                        {
-                            if (Bind(pc, group)) dirty = true;
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                if (dirty)
-                {
-                    UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(scene);
-                    UnityEditor.SceneManagement.EditorSceneManager.SaveScene(scene);
-                }
-                UnityEditor.SceneManagement.EditorSceneManager.CloseScene(scene, removeScene: true);
-            }
-        }
+        var cfg = AssetDatabase.LoadAssetAtPath<PictureChangerConfig>("Assets/PictureChanger/PictureChangerConfig.asset");
+        return cfg == null || string.IsNullOrEmpty(cfg.rootFolder) ? RootFolder : cfg.rootFolder;
     }
 
-    private static bool TryMatchGroup(PictureChanger pc, string group)
+    internal static string GetCompressedFolderNameForPostprocessor()
     {
-        // infer group from current textures or target main texture
-        var sizes = new List<(int w, int h)>();
-        if (pc.textures != null)
-        {
-            foreach (var t in pc.textures)
-            {
-                if (t is Texture2D t2) sizes.Add((t2.width, t2.height));
-            }
-        }
-        if (sizes.Count == 0 && pc.targetObject != null)
-        {
-            var mr = pc.targetObject.GetComponent<MeshRenderer>();
-            var tex = mr != null ? mr.sharedMaterial?.mainTexture as Texture2D : null;
-            if (tex != null) sizes.Add((tex.width, tex.height));
-        }
-        if (sizes.Count == 0) return false;
-        var g = (sizes.Select(s => s.w).Distinct().Count() == 1 && sizes.Select(s => s.h).Distinct().Count() == 1)
-            ? $"{sizes[0].w}x{sizes[0].h}" : "Mixed";
-        return g == group;
-    }
-
-    private static bool Bind(PictureChanger pc, string group)
-    {
-        var folder = $"Assets/PictureChanger/{group}";
-        var guids = AssetDatabase.FindAssets("t:Texture2D", new[] { folder });
-        var texPaths = guids.Select(AssetDatabase.GUIDToAssetPath).OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToArray();
-        var textures = texPaths.Select(p => AssetDatabase.LoadAssetAtPath<Texture>(p)).Where(t => t != null).ToArray();
-        var so = new SerializedObject(pc);
-        var sp = so.FindProperty("textures");
-        sp.arraySize = textures.Length;
-        for (int i = 0; i < textures.Length; i++)
-            sp.GetArrayElementAtIndex(i).objectReferenceValue = textures[i];
-        so.ApplyModifiedPropertiesWithoutUndo();
-        return true;
+        var cfg = AssetDatabase.LoadAssetAtPath<PictureChangerConfig>("Assets/PictureChanger/PictureChangerConfig.asset");
+        return cfg == null || string.IsNullOrEmpty(cfg.compressedFolderName) ? CompressedFolderName : cfg.compressedFolderName;
     }
 }
