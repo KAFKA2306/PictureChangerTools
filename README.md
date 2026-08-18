@@ -1,52 +1,31 @@
 # PictureChanger Tools for Unity Editor
 
-Unity Editor用のユーティリティセットで、プロジェクト内のPictureChangerコンポーネントおよびPicture-materialオブジェクトで使用する画像をスキャン・準備・バインドするための機能を提供します。主な機能は以下の通りです：
+Unity Editorで `PictureChanger` と `Picture` オブジェクトの画像を確認・生成・割り当てするEditor toolです。実装は `Assets/Editor/PictureChangerTools.cs` にあります。
 
-- PrefabとScene全体にわたる画像の使用状況とテクスチャサイズのスキャン
-- ソース画像のリサイズ/圧縮コピーの生成（長辺がNピクセル以下に収まるように）
-- Scene内のフレームに対して、向きを考慮したテクスチャをランダムに割り当て
-- Prefabのインポート時に内容を最新状態に維持。オプションでSceneの再バインドも可能
-- 参照されなくなった生成/圧縮テクスチャのクリーンアップ
+## メニュー
 
-## 動作要件
-- Unity Editor 2020以降（スクリプトで使用しているEditor APIの動作確認済み）
-- Unity Test Framework（テスト実行用、オプション機能）
+現在のコードが登録するメニューは次の3つです。
 
-## インストール方法
-- このリポジトリに含まれる  フォルダをプロジェクト内に配置してください
-- 初回使用時に設定アセットが  に作成されます
+- `Tools/PictureChanger/Scan usages and sizes`
+  - PrefabとSceneを検索し、画像利用状況を `Assets/PictureChanger/picture_changer_report.txt` に出力します。
+- `Tools/PictureChanger/Random assign VRChat images (resize, scenes)`
+  - 入力画像をリサイズして `Assets/PictureChanger/Compressed1023` 以下へ生成し、向きに合わせてScene内の対象へ割り当てます。
+  - 実行前に確認ダイアログを表示します。
+- `Tools/PictureChanger/Clean unreferenced compressed images`
+  - PrefabとSceneから参照されていない圧縮画像を削除します。
+  - 実行前に確認ダイアログを表示します。
 
-## 設定項目
-以下の設定を編集可能です：
-- rootFolder: 出力のベースフォルダ（デフォルト: ）
-- defaultRandomFolder: 画像のソースフォルダ
-- compressedFolderName: リサイズ/圧縮出力用のサブフォルダ名
-- maxLongSideLessThan: 生成テクスチャの最大長辺サイズ
-- verboseLogging: 詳細なログ出力を有効にする
-- autoRebindScenesOnImport: このオプションを有効化すると、テクスチャインポート時にSceneが自動開/保存されます。無効の場合はSceneの再バインド処理がキューに追加されます
+## 既定値
 
-## メニューコマンド
-- ツール/PictureChanger/使用状況とサイズのスキャン
-  - PrefabとSceneをスキャンし、結果を .に出力します
-  - 必要に応じて  以下にサイズ別のフォルダを作成します
-- ツール/PictureChanger/VRChat用画像をランダムに割り当て（リサイズ/Scene）
-  - リサイズ済みテクスチャを .に生成します
-  - Sceneごとに向きが一致するテクスチャをランダムに割り当てます。処理進捗を表示し、キャンセル操作も可能です
-- ツール/PictureChanger/参照されていない圧縮画像のクリーンアップ
-  - Prefab/Scene内でどのPictureChangerからも参照されていない圧縮テクスチャを削除します
-- ツール/PictureChanger/インポート待ちSceneの再バインド
-  - インポートされたテクスチャに対して、キューに登録されたSceneの再バインド処理を適用します。インポート時にSceneを自動保存する機能はデフォルトで無効になっています
+コード上の既定値は次のとおりです。
 
-## 安全性とユーザーエクスペリエンス
-- 長時間かかる処理には進捗バーを表示し、キャンセル操作が可能です
-- データに影響を与える可能性のある操作については、実行前に確認ダイアログを表示します
-- インポート時の処理では、デフォルトでPrefabの内容を最新状態に更新し、Sceneの更新処理はキューに追加されます
+- 出力root: `Assets/PictureChanger`
+- 入力folder: `Assets/sameR&D/Picture`
+- 圧縮画像folder: `Compressed1023`
+- 最大長辺: 1023 px
 
-## テストについて
-- 純粋なヘルパー機能の基本EditModeテストは、  フォルダ内に配置されています（存在する場合）
-- Unity Test Runnerを使用して実行してください（ウィンドウメニュー→一般→テストランナーから起動可能）
+設定が存在する場合はコード内の `PictureChangerConfig` がこれらを上書きします。
 
-## 開発メモ
-- Editor用コードは機能ごとに分割されています：ツール機能、ポストプロセッサ、再バインドキュー、設定管理など
-- IO操作には基本的な例外処理を実装しており、システムが停止するような重大なエラーを回避しています
-- 今後のリファクタリングにより、追加のヘルパー機能を抽出したり、より詳細なログレベルを設定することが考えられます
+## 検証
+
+このrepositoryには現在、Unity project設定、test suite、GitHub Actions workflowは含まれていません。Unity Editorでのcompileと各メニューの動作確認は別途必要です。
